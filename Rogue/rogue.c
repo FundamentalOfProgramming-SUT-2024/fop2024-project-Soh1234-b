@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <math.h>
+#include <pthread.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
 #include <wchar.h>
@@ -36,6 +37,7 @@ typedef struct{
     int has_arrow;
     int has_dagger;
     int has_wand;
+    int has_mace;
 }Player;
 
 typedef struct{
@@ -113,6 +115,35 @@ typedef struct{
     char email[100];
 } User;
 
+typedef struct{
+    Position position;
+    int dhealth;
+    int steps;
+}Deamon;
+
+typedef struct{
+    Position position;
+    int dhealth;
+    int steps;
+}Fbmonster;
+
+typedef struct{
+    Position position;
+    int dhealth;
+    int steps;
+}Giant;
+
+typedef struct{
+    Position position;
+    int dhealth;
+}Snake;
+
+typedef struct{
+    Position position;
+    int dhealth;
+    int steps;
+}Undeed;
+
 User user;
 Player players[MAX_USERS];
 int player_count = 0;
@@ -130,6 +161,11 @@ Speed speed[100];
 Health health[100];
 Trap traps[12];
 Room rooms[6];
+Deamon deamons[12];
+Giant giants[6];
+Snake snakes[6];
+Undeed undeeds[6];
+Fbmonster fbmonsters[12];
 Room treasure;
 int visited[GRID_HEIGHT][GRID_WIDTH];
 int randpass=687;
@@ -154,6 +190,26 @@ int spellindex[6];
 int is_reversed[GRID_HEIGHT][GRID_WIDTH];
 int isspell[GRID_HEIGHT][GRID_WIDTH];
 int isdead=0;
+int isinroom=-1;
+int visit[GRID_HEIGHT][GRID_WIDTH];
+int selectedweapon=-1;
+int fcount=0;
+int dcount=0;
+int gcount=0;
+int scount=0;
+int ucount=0;
+int gsteps=0;
+int usteps=0;
+int totalsteps=0;
+int healthtime=0;
+int speedtime=0;
+int damagetime=0;
+int healthactivated=1;
+int speedactivated=1;
+int damageactivated=1;
+int throw=0;
+int chcopy=0;
+int finish_index=0;
 
 void create_room(Room *rooms, Player *player);
 void draw_rooms(Room *rooms, char grid[GRID_HEIGHT][GRID_WIDTH], Player *player);
@@ -178,17 +234,21 @@ int validate_username(char*);
 int player_move(int y, int x, Player *player,char[GRID_HEIGHT][GRID_WIDTH], int *steps);
 int check_position(int y, int x, Player *player, char[GRID_HEIGHT][GRID_WIDTH], int *steps, int [GRID_HEIGHT][GRID_WIDTH]);
 void generate_corridors(Room *rooms);
-void init_grid(char[24][80], int[24][80]);
+void init_grid(char[GRID_HEIGHT][GRID_WIDTH], int[GRID_HEIGHT][GRID_WIDTH]);
 int is_valid_position(int y, int x);
-void print_grid(char[24][80], int[24][80], Player *player);
+void print_grid(char[GRID_HEIGHT][GRID_WIDTH], int[GRID_HEIGHT][GRID_WIDTH], Player *player);
 void score(Player *player);
 void print_grid2(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID_WIDTH], Player *player);
 void foodmenu(Player *player);
 void spellmenu();
+void weaponmenu(Player *player);
 void draw_treasure(char grid[GRID_HEIGHT][GRID_WIDTH]);
 void create_treasure(Player *player);
 void save_quit(Player *player);
-void final_menu();
+void final_menu(Player *player);
+void close_enemy_damage(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH]);
+void far_enemy_damage(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH]);
+void quit_ask_menu(Player *player);
 
 char *coin="⛀";
 char *blackcoin="⛃";
@@ -200,7 +260,7 @@ char *wandd="⚚";
 char *foodd="⛾";
 char *potionn="⚱";
 
-int main() {
+int main() {   
     setlocale(LC_ALL,"");
     cbreak();
     initscr();
@@ -224,14 +284,22 @@ int main() {
         init_pair(12,12, COLOR_BLACK);
         init_color(13,972,937,93);
         init_pair(13,13,COLOR_BLACK);
-        
+        init_color(14,542,0,0);
+        init_pair(14,14,COLOR_BLACK);
+        init_color(15,726,554,136);
+        init_pair(15,15,COLOR_BLACK);
+        init_color(16,585,293,0);
+        init_pair(16,16,COLOR_BLACK);
+        init_color(17,562,929,562);
+        init_pair(17,17,COLOR_BLACK); 
+        init_color(18,500,0,500);
+        init_pair(18,18,COLOR_BLACK);        
     }
     else{
         mvprintw(LINES/2, COLS/2-14, "Sorry! Your system does not support colors");
         return 0;
     }
     char grid[GRID_HEIGHT][GRID_WIDTH];
-    int visit[GRID_HEIGHT][GRID_WIDTH];
     init_grid(grid,visit);
     Player player;
     int ch;
@@ -241,27 +309,46 @@ int main() {
     player.color=3;
     player.level=1;
     player.score=0;
+    player.has_arrow=0;
+    player.has_dagger=0;
+    player.has_wand=0;
+    player.has_sword=0;
+    player.has_mace=1;
     int steps=0;
-    pre_menu(&player);
-    create_room(rooms, &player);
+    if(pre_menu(&player)==2){
+        endwin();
+        return 0;
+    }create_room(rooms, &player);
+    fcount=0;
     draw_rooms(rooms,grid, &player);
     player_setup(&player, grid, visit);
     print_grid(grid,visit,&player);
     player.score=0;
     player.gold=0;
     score(&player);
-    while((ch = getch()) != 'q' && isdead==0){
+    while(((ch = getch()) != 'q') && isdead==0 && player.health_point>0){
         if(handle_input(ch,&player,grid, &steps, visit)==1)
             break;
         refresh();
-    }if(ch=='q' || ch=='Q'){
+    }if (player.health_point<=0){
+        final_menu(&player);
         endwin();
         return 0;
-    }clear();
+    }
+    if(ch=='q' || ch=='Q'){
+
+        if(is_guest==0 && isdead==0)
+            save_quit(&player);
+        final_menu(&player);
+        endwin();
+        return 0;
+    }
+    clear();
     player.level+=1;
     isstair=0;
     init_grid(grid,visit);
     create_room(rooms, &player);
+    fcount=0;
     draw_rooms(rooms,grid, &player);
     player_setup(&player, grid, visit);
     print_grid(grid,visit,&player);
@@ -269,18 +356,28 @@ int main() {
     mvprintw(0,0,"Welcome to the Second Floor!                                                          ");
     attroff(COLOR_PAIR(4));
     score(&player);
-    while((ch = getch()) != 'q' && isdead==0){
+    while((ch = getch()) != 'q' && isdead==0 && player.health_point>0){
         if(handle_input(ch,&player,grid, &steps, visit)==1)
             break;
         refresh();
-    }if(ch=='q' || ch=='Q'){
+    }if (player.health_point<=0){
+        final_menu(&player);
         endwin();
         return 0;
-    }clear();
+    }
+    if(ch=='q' || ch=='Q'){
+        if(is_guest==0 && isdead==0)
+            save_quit(&player);
+        final_menu(&player);
+        endwin();
+        return 0;
+    }
+    clear();
     player.level+=1;
     isstair=0;
     init_grid(grid,visit);
     create_room(rooms, &player);
+    fcount=0;
     draw_rooms(rooms,grid, &player);
     player_setup(&player, grid, visit);
     print_grid(grid,visit,&player);
@@ -288,18 +385,28 @@ int main() {
     mvprintw(0,0,"Welcome to the Third Floor!                                                          ");
     attroff(COLOR_PAIR(4));
     score(&player);
-    while((ch = getch()) != 'q' && isdead==0){
+    while((ch = getch()) != 'q' && isdead==0 && player.health_point>0){
         if(handle_input(ch,&player,grid, &steps, visit)==1)
             break;
         refresh();
-    }if(ch=='q' || ch=='Q'){
+    }if (player.health_point<=0){
+        final_menu(&player);
         endwin();
         return 0;
-    }clear();
+    }
+    if(ch=='q' || ch=='Q'){
+        if(is_guest==0 && isdead==0)
+            save_quit(&player);
+        final_menu(&player);
+        endwin();
+        return 0;
+    }
+    clear();
     player.level+=1;
     isstair=0;
     init_grid(grid,visit);
     create_room(rooms, &player);
+    fcount=0;
     draw_rooms(rooms,grid, &player);
     player_setup(&player, grid, visit);
     print_grid(grid,visit,&player);
@@ -307,14 +414,23 @@ int main() {
     attron(COLOR_PAIR(4));
     mvprintw(0,0,"Welcome to the Last Floor!                                                          ");
     attroff(COLOR_PAIR(4));
-    while((ch = getch()) != 'q' && isdead==0){
+    while((ch = getch()) != 'q' && isdead==0 && player.health_point>0){
         if(handle_input(ch,&player,grid, &steps, visit)==1)
             break;
         refresh();
-    }if(ch=='q' || ch=='Q'){
+    }if (player.health_point<=0){
+        final_menu(&player);
         endwin();
         return 0;
-    }init_grid(grid,visit);
+    }
+    if(ch=='q' || ch=='Q'){
+        if(is_guest==0 && isdead==0)
+            save_quit(&player);
+        final_menu(&player);
+        endwin();
+        return 0;
+    }
+    init_grid(grid,visit);
     clear();
     create_treasure(&player);
     draw_treasure(grid);
@@ -325,21 +441,33 @@ int main() {
     attron(COLOR_PAIR(12));
     mvprintw(0,0,"Treasure Room!                                                          ");
     attroff(COLOR_PAIR(12));
-    while((ch = getch()) != 'q' && isdead==0){
-        if(handle_input(ch,&player,grid, &steps, visit)==1)
+    while((ch = getch()) != 'q' && isdead==0 && player.health_point>0){
+        if(handle_input(ch,&player,grid, &steps, visit)==1){
+            finish_index=1;
             break;
-        refresh();
-    }if(ch=='q' || ch=='Q'){
+        }refresh();
+    }if (player.health_point<=0){
+        final_menu(&player);
         endwin();
         return 0;
-    }if(is_guest==0)
+    }
+    if(ch=='q' || ch=='Q'){
+        if(is_guest==0 && isdead==0)
+            save_quit(&player);
+        final_menu(&player);
+        endwin();
+        return 0;
+    }
+    if (player.health_point<=0)
+        isdead=1;
+    if(is_guest==0 && isdead==0){
         save_quit(&player);
-    final_menu();
+    final_menu(&player);
     endwin();
-    return 0;
+    return 0;}
 }
 
-void init_grid(char grid[24][80],int visit[24][80]) {
+void init_grid(char grid[GRID_HEIGHT][GRID_WIDTH],int visit[GRID_HEIGHT][GRID_WIDTH]) {
     for (int i = 0; i < GRID_HEIGHT; ++i) {
         for (int j = 0; j < GRID_WIDTH; ++j) {
             grid[i][j] = ' ';
@@ -379,29 +507,96 @@ void init_grid(char grid[24][80],int visit[24][80]) {
         speed[i+6].position.x=0;
         speed[i+12].position.x=0;
         speed[i+18].position.x=0;
-
-    }
+        deamons[i].dhealth=5;
+        deamons[i+6].dhealth=5;
+        deamons[i].steps=0;
+        deamons[i+6].steps=0;
+        deamons[i].position.x=0;
+        deamons[i+6].position.x=0;
+        fbmonsters[i].dhealth=10;
+        fbmonsters[i+6].dhealth=10;
+        fbmonsters[i].steps=0;
+        fbmonsters[i+6].steps=0;
+        fbmonsters[i].position.x=0;
+        fbmonsters[i+6].position.x=0;  
+        fcount=0;
+        giants[i].steps=0;
+        giants[i].position.x=0;
+        giants[i].dhealth=15;
+        gcount=0; 
+        snakes[i].position.x=0;
+        snakes[i].dhealth=20;
+        scount=0; 
+        undeeds[i].steps=0;
+        undeeds[i].position.x=0;
+        undeeds[i].dhealth=30;
+        ucount=0;      
+    }isinroom=-1;
+    gsteps=0;
+    usteps=0;
 }
 
 void score(Player *player){
     attroff(COLOR_PAIR);
-    mvprintw(23,1,"Level: %d", player->level);
-    mvprintw(23,16,"Health: %d", player->health_point);
-    mvprintw(23,31,"Gold: %d     ", player->gold);
-    mvprintw(23,46,"Food: %d", player->food);
-    mvprintw(23,61,"Score: %d       ", player->score);
+    mvprintw((GRID_HEIGHT-1),1,"Level: %d", player->level);
+    mvprintw((GRID_HEIGHT-1),16,"Health: %d", player->health_point);
+    mvprintw((GRID_HEIGHT-1),31,"Gold: %d     ", player->gold);
+    mvprintw((GRID_HEIGHT-1),46,"Food: %d", player->food);
+    mvprintw((GRID_HEIGHT-1),61,"Score: %d       ", player->score);
 }
 
-void final_menu(){
+void quit_ask_menu(Player* player){
+    clear();
+    draw_menu_border();
+    attron(COLOR_PAIR(4));
+    mvprintw(LINES/2-1,COLS/2-20,"Are you sure you want to quit the game?");
+    refresh();
+    sleep(2);
+    char* options[] = {"YES", "No"};
+    int choice = 0;
+    while (1) { 
+        attron(COLOR_PAIR(4));
+        for (int i = 0; i < 2; ++i) {
+            if (i == choice)
+                attron(A_REVERSE);
+            mvprintw(LINES / 2 + i, COLS / 2 - 1, "%s", options[i]);
+            if (i == choice)
+                attroff(A_REVERSE);
+        }int ch = getch();
+        if (ch == KEY_UP)
+            choice = (choice == 0) ? 1 : choice - 1;
+        else if (ch == KEY_DOWN)
+            choice = (choice == 1) ? 0 : choice + 1;
+        else if (ch == '\n') {
+            switch (choice) {
+                case 0:
+                    final_menu(player);
+                    break;
+                case 1:
+                    return;
+                    break;
+            }
+        }
+    }attroff(COLOR_PAIR(4));
+}
+
+
+void final_menu(Player *player){
     clear();
     draw_menu_border();
     attron(COLOR_PAIR(12));
-    if(isdead==0){
+    if(isdead==0 && finish_index!=0){
+        player->score+=1000;
         mvprintw(LINES/2-4, COLS/2 - 29, "Congratulations to all free workers of the world! You Won!");
-    }else   
+        mvprintw(LINES/2-3, COLS/2 - 6, "Your Score: %d", player->score);
+        refresh();
+        sleep(3);
+    }else if(isdead==1){ 
         mvprintw(LINES/2-4, COLS/2 - 35, "Sorry you lost! But Never is late for a free worker to build a Utopia");
-    refresh();
-    sleep(3);
+        mvprintw(LINES/2-3, COLS/2 - 6, "Your Score: %d", player->score);
+        refresh();
+        sleep(3);
+    }
     mvprintw(LINES/2, COLS/2- 23 ,"Thank you for playing! press any key to quit!");
     int ch;
     ch = getch();
@@ -409,73 +604,75 @@ void final_menu(){
 }
 
 void save_quit(Player *player) {
-    FILE *file = fopen("players.txt", "r+");
-    if (!file) return;
+    FILE *file = fopen("players.txt", "r");
+    if (!file) {
+        mvprintw(0, 0, "Error opening file for reading.");
+        return;
+    }
+    char lines[200][256]; 
+    int line_count = 0;
+    int found = 0;
+    while (fgets(lines[line_count], sizeof(lines[line_count]), file)) {
+        line_count++;
+    }
+    fclose(file);
+    for (int i = 0; i < line_count; i += 6) {
+        if (strncmp(lines[i], player->username, strlen(player->username)) == 0) {
+            found = 1;
+            int gold = atoi(lines[i + 1]);
+            int total_gold = atoi(lines[i + 2]);
+            int games_played = atoi(lines[i + 3]);
+            int score = atoi(lines[i + 5]);
+            gold = player->gold;
+            total_gold += player->gold;
+            games_played += 1;
+            score += player->score;
+            sprintf(lines[i + 1], "%d\n", gold);
+            sprintf(lines[i + 2], "%d\n", total_gold);
+            sprintf(lines[i + 3], "%d\n", games_played);
+            sprintf(lines[i + 5], "%d\n", score);
 
-    char line[768];
-    int i = 0;
-    int line_number = 0;
-    long pos_to_update = -1;
-    
-
-    while (fgets(line, sizeof(line), file)) {
-        line_number++;
-        if ((line_number % 6) == 1) {
-            line[strcspn(line, "\n")] = '\0';
-            if (strcmp(line, player->username) == 0) {
-                fprintf(file, "%d\n", player->gold);
-                pos_to_update = ftell(file);
-                fscanf(file, "%d", &player->sum_of_gold);
-                player->sum_of_gold+=player->gold;
-                fseek(file, pos_to_update, SEEK_SET);
-                fprintf(file, "%d\n", player->sum_of_gold);
-                pos_to_update = ftell(file);
-                fscanf(file, "%d", &player->number_of_games);
-                player->number_of_games++;
-                fseek(file, pos_to_update, SEEK_SET);
-                fprintf(file, "%d\n", player->number_of_games);
-                pos_to_update = ftell(file);
-                fscanf(file, "%d", &player->number_of_logins);
-                fseek(file, pos_to_update, SEEK_SET);
-                fprintf(file, "%d\n", player->number_of_logins);
-                pos_to_update = ftell(file);
-                int num=player->score;
-                fscanf(file, "%d", &player->score);
-                player->score+=num;
-                fseek(file, pos_to_update, SEEK_SET);
-                fprintf(file, "%d", player->score);
-                fclose(file);
-                return;
-            }
+            break;
         }
     }
 
+    if (!found) {
+        mvprintw(0, 0, "User not found!");
+        return;
+    }
+    file = fopen("players.txt", "w");
+    if (!file) {
+        mvprintw(0, 0, "Error opening file for writing.");
+        return;
+    }
+
+    for (int i = 0; i < line_count; i++) {
+        fputs(lines[i], file);
+    }
     fclose(file);
 }
 
-
-
 int pre_menu(Player *player) {
-    char* options[] = {"Create New Account", "Login to Account", "Enter as Guest"};
+    char* options[] = {"Create New Account", "Login to Account", "Enter as Guest", "Quit Game"};
     int choice = 0;
     clear();
     draw_menu_border();
     int exit_check = 0;
     while (!exit_check) { 
         attron(COLOR_PAIR(4));
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             if (i == choice)
                 attron(A_REVERSE);
-            mvprintw(LINES / 2 + i - 1, COLS / 2 - 7, "%s", options[i]);
+            mvprintw(LINES / 2 + i - 2, COLS / 2 - 7, "%s", options[i]);
             if (i == choice)
                 attroff(A_REVERSE);
         }
 
         int ch = getch();
         if (ch == KEY_UP)
-            choice = (choice == 0) ? 2 : choice - 1;
+            choice = (choice == 0) ? 3 : choice - 1;
         else if (ch == KEY_DOWN)
-            choice = (choice == 2) ? 0 : choice + 1;
+            choice = (choice == 3) ? 0 : choice + 1;
         else if (ch == '\n') {
             switch (choice) {
                 case 0:
@@ -513,6 +710,8 @@ int pre_menu(Player *player) {
                         exit_check=1;
                         break;
                     }
+                case 3:
+                    return 2;
             }
             clear();
             draw_menu_border();
@@ -827,18 +1026,42 @@ void spellmenu(){
                     mvprintw(LINES/2+3, COLS/2 - 17, "Sorry! You're out of damage spells!");
                     refresh();
                     sleep(2);
+                }else{
+                    damagenumber-=1;
+                    damagetime=5;
+                    damageactivated=2;
+                    mvprintw(LINES/2+3, COLS/2 - 12, "Damage Spell is activated");
+                    refresh();
+                    sleep(2);
+                    break;
                 }
             }else if(choice==1){
                 if(speednumber==0){
                     mvprintw(LINES/2+3, COLS/2 - 17, "Sorry! You're out of speed spells!");
                     refresh();
                     sleep(2);
+                }else{
+                    speednumber-=1;
+                    speedtime=20;
+                    speedactivated=2;
+                    mvprintw(LINES/2+3, COLS/2 - 12, "Speed Spell is activated");
+                    refresh();
+                    sleep(2);
+                    break;
                 }
             }else if(choice==2){
                 if(healthnumber==0){
                     mvprintw(LINES/2+3, COLS/2 - 17, "Sorry! You're out of health spells!");
                     refresh();
                     sleep(2);
+                }else{
+                    healthnumber-=1;
+                    healthtime=50;
+                    healthactivated=2;
+                    mvprintw(LINES/2+3, COLS/2 - 12, "Health Spell is activated");
+                    refresh();
+                    sleep(2);
+                    break;
                 }
             }else if(choice==3)
                 break;
@@ -846,6 +1069,129 @@ void spellmenu(){
                         break; 
                     }
     }attroff(COLOR_PAIR(4));
+}
+
+void weaponmenu(Player *player){
+    clear();
+    char *options[]={"Mace", "Sword", "Arrow","Dagger","Magic Wand"};
+    int choice=0;
+    attron(COLOR_PAIR(4));
+    mvprintw(0,0,"To select weapons:     g=magicwand    d=dagger    a=arrow     s=sword     m=mace");
+    mvprintw(LINES/2-5, COLS/2 - 7, "Weapon's Backpack");
+    mvprintw(LINES/2-3, COLS/2-18,"Weapon Type     Number     Damage     Range");
+    mvprintw(LINES/2-2, 0,"Short-Range Weapons:");
+    mvprintw(LINES/2, 0,"Long-Range Weapons:");
+    attroff(COLOR_PAIR(4));
+    attron(COLOR_PAIR(12));
+    mvprintw(LINES/2-2, COLS/2 -2,"1");
+    mvprintw(LINES/2-2, COLS/2 +9,"5");
+    mvprintw(LINES/2-2, COLS/2 +20,"0");
+    mvprintw(LINES/2-1, COLS/2 -2,"%d", player->has_sword);
+    mvprintw(LINES/2-1, COLS/2 +9,"10");
+    mvprintw(LINES/2-1, COLS/2 +20,"0");
+    mvprintw(LINES/2, COLS/2 -2,"%d", player->has_arrow);
+    mvprintw(LINES/2, COLS/2 +9,"5");
+    mvprintw(LINES/2, COLS/2 +20,"5");
+    mvprintw(LINES/2+1, COLS/2 -2,"%d", player->has_dagger);
+    mvprintw(LINES/2+1, COLS/2 +9,"12");
+    mvprintw(LINES/2+1, COLS/2 +20,"5");
+    mvprintw(LINES/2+2, COLS/2 -2,"%d", player->has_wand);
+    mvprintw(LINES/2+2, COLS/2 +9,"15");
+    mvprintw(LINES/2+2, COLS/2 +20,"8");
+    while (1) {
+        mvprintw(LINES/2+4, COLS/2- 30, "                                                                  ");
+        attron(COLOR_PAIR(4));
+        for (int i = 0; i < 5; ++i) 
+            mvprintw(LINES / 2 + i - 2, COLS / 2 - 18, "%s", options[i]);
+        attroff(COLOR_PAIR(4));
+        int ch=getch();
+        if(ch=='w' || ch=='W'){
+            selectedweapon=-1;
+            mvprintw(LINES/2+4, COLS/2- 18, "Weapon was put into the packpack!");
+            refresh();
+            sleep(2);
+        }else{
+            if (ch == 'i' || ch=='I') {
+                break; 
+            }else if(ch!='g' && ch!='d' && ch!='a' && ch!='s' && ch!='m'){
+                attron(COLOR_PAIR(4));
+                mvprintw(LINES/2+4, COLS/2- 13, "Please Press A Valid Key!");
+                refresh();
+                sleep(2);
+                attroff(COLOR_PAIR(4));
+            }else if(selectedweapon!=-1){
+                attron(COLOR_PAIR(4));
+                mvprintw(LINES/2+4, COLS/2- 30, "Please put your current weapon in backpack first (press w)");
+                refresh();
+                sleep(2);
+                attroff(COLOR_PAIR(4));
+            }else{
+                attron(COLOR_PAIR(4));
+                if(ch=='m'){
+                    selectedweapon=51;
+                    throw=0;
+                    attron(COLOR_PAIR(4));
+                    mvprintw(LINES/2+4, COLS/2- 13, "Default weapon set to mace!");
+                    attroff(COLOR_PAIR(4));
+                    refresh();
+                    sleep(2);
+                    break;
+                }else if(ch=='s'){
+                    if((player->has_sword)>0){
+                        selectedweapon=100;
+                        throw=0;
+                        mvprintw(LINES/2+4, COLS/2- 13, "Default weapon set to Sword!");
+                        refresh();
+                        sleep(2);
+                        break;
+                    }else{
+                        mvprintw(LINES/2+4, COLS/2- 17, "You haven't collected any Swords yet!");
+                        refresh();
+                        sleep(2);
+                    }
+                }else if(ch=='a'){
+                    if((player->has_arrow)>0){
+                        selectedweapon=53;
+                        throw=1;
+                        mvprintw(LINES/2+4, COLS/2- 13, "Default weapon set to Arrows!");
+                        refresh();
+                        sleep(2);
+                        break;
+                    }else{
+                        mvprintw(LINES/2+4, COLS/2- 17, "You haven't collected any Arrow yet!");
+                        refresh();
+                        sleep(2);
+                    }
+                }else if(ch=='d'){
+                    if((player->has_dagger)>0){
+                        selectedweapon=123;
+                        throw=1;
+                        mvprintw(LINES/2+4, COLS/2- 13, "Default weapon set to Daggers!");
+                        refresh();
+                        sleep(2);
+                        break;
+                    }else{
+                        throw=1;
+                        mvprintw(LINES/2+4, COLS/2- 17, "You haven't collected any Dagger yet!");
+                        refresh();
+                        sleep(2);
+                    }
+                }else if(ch=='g'){
+                    if((player->has_wand)>0){
+                        selectedweapon=158;
+                        mvprintw(LINES/2+4, COLS/2- 15, "Default weapon set to Magic Wands!");
+                        refresh();
+                        sleep(2);
+                        break;
+                    }else{
+                        mvprintw(LINES/2+4, COLS/2- 19, "You haven't collected any Magic Wand yet!");
+                        refresh();
+                        sleep(2);
+                    }
+                }attroff(COLOR_PAIR(4));
+            }
+        }
+    }attroff(COLOR_PAIR(12));
 }
 
 void music_menu() {
@@ -897,42 +1243,37 @@ void draw_menu_border() {
 }
 
 // void play_music(int music_id) {
-//     if (SDL_Init(SDL_INIT_AUDIO) < 0) {
-//         printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
-//         return;
-//     }
+//     SDL_Init(SDL_INIT_AUDIO);
 
-//     if (Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
-//         printf("SDL_mixer could not initialize! SDL_mixer Error: %s\n", Mix_GetError());
-//         return;
-//     }
-
-//     Mix_Music* music = NULL;
 
 //     switch (music_id) {
 //         case 1:
-//             music = Mix_LoadMUS("music1.mp3");
+//             Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0;
+//             Mix_Music* music = Mix_LoadMUS("music1.mp3");
 //             break;
 //         case 2:
-//             music = Mix_LoadMUS("music2.mp3");
+//             Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0;
+//             Mix_Music* music = Mix_LoadMUS("music2.mp3");
 //             break;
 //         case 3:
-//             music = Mix_LoadMUS("music3.mp3");
+//             Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0;
+//             Mix_Music* music = Mix_LoadMUS("music3.mp3");
 //             break;
 //         case 4:
-//             music = Mix_LoadMUS("music4.mp3");
+//             Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0;
+//             Mix_Music* music = Mix_LoadMUS("music4.mp3");
 //             break;
 //         default:
 //             Mix_HaltMusic();
 //             break;
 //     }
 
-//     if (music != NULL) {
-//         Mix_PlayMusic(music, -1); 
-//     }
+//     Mix_PlayMusic(music, -1); 
 
 //     Mix_FreeMusic(music);
 //     Mix_CloseAudio();
+//     SDL_Quit();
+//     return NULL;
 // }
 
 void create_new_account(User *user) {
@@ -1108,10 +1449,10 @@ int check_add_account(char *filename, char *filename2, char *username, char *pas
 }
 
 void create_treasure(Player *player){
-    treasure.position.x= 25;
-    treasure.position.y= 4;
-    treasure.height= 16;
-    treasure.width= 30;
+    treasure.position.x= GRID_WIDTH*5/16;
+    treasure.position.y= GRID_HEIGHT/6;
+    treasure.height= GRID_HEIGHT*2/3;
+    treasure.width= GRID_WIDTH*3/8;
 }
 
 void draw_treasure(char grid[GRID_HEIGHT][GRID_WIDTH]){
@@ -1128,19 +1469,51 @@ void draw_treasure(char grid[GRID_HEIGHT][GRID_WIDTH]){
             grid[j+treasure.position.y][k+treasure.position.x] = '.';
     }int goldnum= rand() % 9  + 11;
     int blackgoldnum= rand() % 4 + 4;
-    int trapnum= rand() % 5 + 8;
+    int trapnum= rand() % 10 + 12;
     for(int i=0; i<goldnum; i++){
-        int y=rand()%14+5;
-        int x=rand()%28+26;
+        int y=rand()%(treasure.height-2)+treasure.position.y + 1;
+        int x=rand()%(treasure.width-2)+treasure.position.x+1;
         grid[y][x]='$';
+    }for(int i=0; i<6; i++){
+        int x,y;
+        if(i<3){
+            y=rand()%(treasure.height/2)+treasure.position.y+1;
+            x=rand()%((treasure.width)/8)+10*i+treasure.position.x+1;
+            grid[y][x]='G';
+        }else{
+            y=rand()%(treasure.height/2)+treasure.position.y + treasure.height/2 -1;
+            x=rand()%(treasure.width/8-1)+10*(i-3)+treasure.position.x+1;
+            grid[y][x]='G';
+        }
+        
     }for(int i=0; i<blackgoldnum; i++){
-        int y=rand()%14+5;
-        int x=rand()%28+26;
+        int y=rand()%(treasure.height-2)+treasure.position.y + 1;
+        int x=rand()%(treasure.width-2)+treasure.position.x+1;
         grid[y][x]='b';
     }for(int i=0; i<trapnum; i++){
-        int y=rand()%14+5;
-        int x=rand()%28+26;
+        int y=rand()%(treasure.height-2)+treasure.position.y + 1;
+        int x=rand()%(treasure.width-2)+treasure.position.x+1;
         grid[y][x]='p';
+    }for(int i=0; i<6; i++){
+        int x,y;
+        if(i<3){
+            y=rand()%(treasure.height/2)+treasure.position.y+1;
+            x=rand()%((treasure.width)/8)+10*i+treasure.position.x+1;
+        }else{
+            y=rand()%(treasure.height/2)+treasure.position.y + treasure.height/2 -1;
+            x=rand()%(treasure.width/8)+10*(i-3)+treasure.position.x+1;
+        }
+        grid[y][x]='S';
+    }for(int i=0; i<6; i++){
+        int x,y;
+        if(i<3){
+            y=rand()%(treasure.height/2)+treasure.position.y+1;
+            x=rand()%(treasure.width/8)+10*i+treasure.position.x+1;
+        }else if(i>=3){
+            y=rand()%(treasure.height/2)+treasure.position.y + treasure.height/2 -1;
+            x=rand()%(treasure.width/8)+10*(i-3)+treasure.position.x+1;
+        }
+        grid[y][x]='U';
     }
 }
 
@@ -1150,12 +1523,12 @@ void create_room(Room *rooms, Player *player){
         spellindex[i]=rand() % 6;
     }
     for(int i=0; i<3; i++){
-        rooms[i].position.y= (rand() % 5)+1;
+        rooms[i].position.y= (rand() % (GRID_HEIGHT/4-1))+1;
         do{
-        rooms[i].position.x= (rand() % 10)+28*(i);
+        rooms[i].position.x= (rand() % (GRID_WIDTH/8))+(GRID_WIDTH/3)*(i);
         }while(rooms[i].position.x==0);
-        rooms[i].height= rand() % 3 + 4;
-        rooms[i].width = rand() % 9 + 6;
+        rooms[i].height= rand() % (GRID_HEIGHT/6) + 4;
+        rooms[i].width = rand() % (GRID_WIDTH*9/80) + 6;
         rooms[i].number_of_doors= rand()%2 +1;
         for (int j=0; j<rooms[i].number_of_doors; j++){
             rooms[i].doors[j].position.x= rooms[i].position.x + rand() % (rooms[i].width-2) + 1;
@@ -1163,9 +1536,30 @@ void create_room(Room *rooms, Player *player){
         }for (int j=0; j<rooms[i].number_of_doors; j++){
             rooms[i].doors[j+2].position.x= rooms[i].position.x + (rand() % 2)* (rooms[i].width-1);
             rooms[i].doors[j+2].position.y= rooms[i].position.y + rand() % (rooms[i].height-2) + 1;
-        }if(rooms[i].height>4 && rooms[i].width>7){
+        }           
+        if(rooms[i].height>4 && rooms[i].width>7){
             traps[i].position.x= rand() % (rooms[i].width - 2) + 1;
             traps[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            if(player->level<=2){
+                deamons[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                deamons[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                if(rooms[i].height>6 && rooms[i].width>7){
+                    deamons[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
+                    deamons[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
+                }fbmonsters[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                fbmonsters[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            }
+            if(player->level<=3 && player->level>=2 && (rooms[i].height>6 || rooms[i].width>7)){
+                giants[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                giants[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                snakes[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                snakes[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            }if(player->level<=4 && player->level>=3 && (rooms[i].height>6 || rooms[i].width>7)){
+                snakes[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                snakes[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                undeeds[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                undeeds[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            } 
             if(rooms[i].height>7 && rooms[i].width>7){
                 traps[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
                 traps[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
@@ -1185,10 +1579,10 @@ void create_room(Room *rooms, Player *player){
             else if(player->level==2){
                 swords[i].position.x=rand() % (rooms[i].width - 2) + 1;
                 swords[i].position.y=rand() % (rooms[i].height - 2) + 1;
-            }else if(player->level==3 && rooms[i].height>6 || rooms[i].width>6){
+            }else if(player->level==3 && (rooms[i].height>6 || rooms[i].width>6)){
                     daggers[i].position.x=rand() % (rooms[i].width - 2) + 1;
                     daggers[i].position.y=rand() % (rooms[i].height - 2) + 1;
-            }if(player->level==4 && rooms[i].height>6 || rooms[i].width>7){
+            }if(player->level==4 && (rooms[i].height>6 || rooms[i].width>7)){
                     wands[i].position.x=rand() % (rooms[i].width - 2) + 1;
                     wands[i].position.y=rand() % (rooms[i].height - 2) + 1;
             }  
@@ -1212,12 +1606,12 @@ void create_room(Room *rooms, Player *player){
             }
         }
     }for(int i=3; i<6; i++){
-        rooms[i].position.y= (rand() % 5)+12;
+        rooms[i].position.y= (rand() % (GRID_HEIGHT/4-1))+GRID_HEIGHT/2;
         do{
-        rooms[i].position.x= (rand() % 10)+28*(i-3);
+        rooms[i].position.x= (rand() % (GRID_WIDTH/8))+(GRID_WIDTH/3)*(i-3);
         }while(rooms[i].position.x==0);
-        rooms[i].height= rand() % 4 + 4;
-        rooms[i].width = rand() % 9 + 6;
+        rooms[i].height= rand() % (GRID_HEIGHT/6) + 4;
+        rooms[i].width = rand() % (GRID_WIDTH*9/80) + 6;
         rooms[i].number_of_doors= rand()%2 +1;
         for (int j=0; j<rooms[i].number_of_doors; j++){
             rooms[i].doors[j].position.x= rooms[i].position.x + rand() % (rooms[i].width-2) + 1;
@@ -1225,11 +1619,31 @@ void create_room(Room *rooms, Player *player){
         }for (int j=0; j<rooms[i].number_of_doors; j++){
             rooms[i].doors[j+2].position.x= rooms[i].position.x + (rand() % 2)* (rooms[i].width-1);
             rooms[i].doors[j+2].position.y= rooms[i].position.y + rand() % (rooms[i].height-2) + 1;
-        }
-        attron(COLOR_PAIR(3));
+        }           
         if(rooms[i].height>4 && rooms[i].width>6){
             traps[i].position.x= rand() % (rooms[i].width - 2) + 1;
             traps[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            if(player->level<=2){
+                fbmonsters[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                fbmonsters[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                deamons[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                deamons[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                if(rooms[i].height>6 && rooms[i].width>7){
+                    deamons[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
+                    deamons[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
+                }
+            }
+            if(player->level<=3 && player->level>=2 && (rooms[i].height>6 || rooms[i].width>7)){
+                giants[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                giants[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                snakes[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                snakes[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            }if(player->level<=4 && player->level>=3 && (rooms[i].height>6 || rooms[i].width>7)){
+                snakes[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                snakes[i].position.y= rand() % (rooms[i].height - 2) + 1;
+                undeeds[i].position.x= rand() % (rooms[i].width - 2) + 1;
+                undeeds[i].position.y= rand() % (rooms[i].height - 2) + 1;
+            } 
             if(rooms[i].height>7 && rooms[i].width>7){
                 traps[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
                 traps[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
@@ -1293,20 +1707,13 @@ void draw_rooms(Room *rooms, char grid[GRID_HEIGHT][GRID_WIDTH],Player *player){
                 health[i].position.y= rand() % (rooms[i].height - 2) + 1;
                 speed[i].position.x= rand() % (rooms[i].width - 2) + 1;
                 speed[i].position.y= rand() % (rooms[i].height - 2) + 1;
-                if (rooms[i].height>6 || rooms[i].width>7){
+                if (rooms[i].height>7 && rooms[i].width>8){
                     damage[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
                     damage[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
                     health[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
                     health[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
                     speed[i+6].position.x= rand() % (rooms[i].width - 2) + 1;
                     speed[i+6].position.y= rand() % (rooms[i].height - 2) + 1;
-                }if (rooms[i].height>6 && rooms[i].width>7){
-                    damage[i+12].position.x= rand() % (rooms[i].width - 2) + 1;
-                    damage[i+12].position.y= rand() % (rooms[i].height - 2) + 1;
-                    health[i+12].position.x= rand() % (rooms[i].width - 2) + 1;
-                    health[i+12].position.y= rand() % (rooms[i].height - 2) + 1;
-                    speed[i+12].position.x= rand() % (rooms[i].width - 2) + 1;
-                    speed[i+12].position.y= rand() % (rooms[i].height - 2) + 1;
                 }
             }
         }for(int j=0; j<rooms[i].height-1; j++){
@@ -1515,25 +1922,40 @@ void draw_rooms(Room *rooms, char grid[GRID_HEIGHT][GRID_WIDTH],Player *player){
             if(traps[i+6].position.x != 0){
                 grid[traps[i+6].position.y + rooms[i].position.y][traps[i+6].position.x + rooms[i].position.x]='p';
             }
-        }if (pillars[i].position.x != 0){
+        }if (fbmonsters[i].position.x != 0){
+            grid[fbmonsters[i].position.y + rooms[i].position.y][fbmonsters[i].position.x + rooms[i].position.x] = 'F';
+        }
+        if (pillars[i].position.x != 0){
             grid[pillars[i].position.y + rooms[i].position.y][pillars[i].position.x + rooms[i].position.x] = 'O';
             if(pillars[i+6].position.x != 0){
                 grid[pillars[i+6].position.y + rooms[i].position.y][pillars[i+6].position.x + rooms[i].position.x]='O';
             }
-        }if (blackgold[i].position.x != 0){
+        }if (deamons[i].position.x != 0){
+            grid[deamons[i].position.y + rooms[i].position.y][deamons[i].position.x + rooms[i].position.x] = 'D';
+        }if(deamons[i+6].position.x != 0){
+                grid[deamons[i+6].position.y + rooms[i].position.y][deamons[i+6].position.x + rooms[i].position.x]='D';
+            }
+        if (giants[i].position.x != 0){
+            grid[giants[i].position.y + rooms[i].position.y][giants[i].position.x + rooms[i].position.x] = 'G';
+        }if (snakes[i].position.x != 0){
+            grid[snakes[i].position.y + rooms[i].position.y][snakes[i].position.x + rooms[i].position.x] = 'S';
+        }if (undeeds[i].position.x != 0){
+            grid[undeeds[i].position.y + rooms[i].position.y][undeeds[i].position.x + rooms[i].position.x] = 'U';
+        }
+        if (blackgold[i].position.x != 0){
             grid[blackgold[i].position.y + rooms[i].position.y][blackgold[i].position.x + rooms[i].position.x] = 'b';
             
         }
         if (arrows[i].position.x != 0 && player->level==1 && spellindex[0]!=i && spellindex[1]!=i){
             grid[arrows[i].position.y + rooms[i].position.y][arrows[i].position.x + rooms[i].position.x] = 'A';
         }if (swords[i].position.x != 0 && player->level==2  && spellindex[0]!=i && spellindex[1]!=i){
-            grid[swords[i].position.y + rooms[i].position.y][swords[i].position.x + rooms[i].position.x] = 'S';
+            grid[swords[i].position.y + rooms[i].position.y][swords[i].position.x + rooms[i].position.x] = 's';
         }if (daggers[i].position.x != 0 && player->level==3  && spellindex[0]!=i && spellindex[1]!=i){
-            grid[daggers[i].position.y + rooms[i].position.y][daggers[i].position.x + rooms[i].position.x] = 'D';
+            grid[daggers[i].position.y + rooms[i].position.y][daggers[i].position.x + rooms[i].position.x] = 'd';
         }if (wands[i].position.x != 0 && player->level==4 && spellindex[0]!=i && spellindex[1]!=i){
             grid[wands[i].position.y + rooms[i].position.y][wands[i].position.x + rooms[i].position.x] = 'W';
         }if (foods[i].position.x != 0 && spellindex[0]!=i && spellindex[1]!=i){
-            grid[foods[i].position.y + rooms[i].position.y][foods[i].position.x + rooms[i].position.x] = 'F';
+            grid[foods[i].position.y + rooms[i].position.y][foods[i].position.x + rooms[i].position.x] = 'f';
         }if (damage[i].position.x != 0){
             grid[damage[i].position.y + rooms[i].position.y][damage[i].position.x + rooms[i].position.x] = ')';
             if(damage[i+6].position.x != 0){
@@ -1594,12 +2016,12 @@ void print_grid(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID_
                     mvprintw(i,j,"%s",arroww);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='D'){
+                }else if(grid[i][j]=='d'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",daggerr);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='S'){
+                }else if(grid[i][j]=='s'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",swordd);
                     attroff(COLOR_PAIR(1));
@@ -1609,10 +2031,35 @@ void print_grid(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID_
                     mvprintw(i,j,"%s",wandd);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='F'){
+                }else if(grid[i][j]=='f'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",foodd);
                     attroff(COLOR_PAIR(1));
+                    continue;
+                }else if(grid[i][j]=='D'){
+                    attron(COLOR_PAIR(14));
+                    mvprintw(i,j,"D");
+                    attroff(COLOR_PAIR(14));
+                    continue;
+                }else if(grid[i][j]=='F'){
+                    attron(COLOR_PAIR(15));
+                    mvprintw(i,j,"F");
+                    attroff(COLOR_PAIR(15));
+                    continue;
+                }else if(grid[i][j]=='G'){
+                    attron(COLOR_PAIR(16));
+                    mvprintw(i,j,"G");
+                    attroff(COLOR_PAIR(16));
+                    continue;
+                }else if(grid[i][j]=='S'){
+                    attron(COLOR_PAIR(17));
+                    mvprintw(i,j,"S");
+                    attroff(COLOR_PAIR(17));
+                    continue;
+                }else if(grid[i][j]=='U'){
+                    attron(COLOR_PAIR(18));
+                    mvprintw(i,j,"U");
+                    attroff(COLOR_PAIR(18));
                     continue;
                 }else if(grid[i][j]==')'){
                     attron(COLOR_PAIR(3));
@@ -1639,6 +2086,7 @@ void print_grid(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID_
                 else if(grid[i][j]=='^'){
                     attron(COLOR_PAIR(5));
                     mvprintw(i,j,"∧");
+                    attroff(COLOR_PAIR(5));
                     continue;
                 }
                 else if(grid[i][j]=='b'){
@@ -1701,12 +2149,12 @@ void print_grid2(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID
                     mvprintw(i,j,"%s",arroww);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='D'){
+                }else if(grid[i][j]=='d'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",daggerr);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='S'){
+                }else if(grid[i][j]=='s'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",swordd);
                     attroff(COLOR_PAIR(1));
@@ -1716,7 +2164,7 @@ void print_grid2(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID
                     mvprintw(i,j,"%s",wandd);
                     attroff(COLOR_PAIR(1));
                     continue;
-                }else if(grid[i][j]=='F'){
+                }else if(grid[i][j]=='f'){
                     attron(COLOR_PAIR(1));
                     mvprintw(i,j,"%s",foodd);
                     attroff(COLOR_PAIR(1));
@@ -1725,6 +2173,31 @@ void print_grid2(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID
                     attron(COLOR_PAIR(13));
                     mvprintw(i,j,"%s",blackcoin);
                     attroff(COLOR_PAIR(13));
+                    continue;
+                }else if(grid[i][j]=='D'){
+                    attron(COLOR_PAIR(14));
+                    mvprintw(i,j,"D");
+                    attroff(COLOR_PAIR(14));
+                    continue;
+                }else if(grid[i][j]=='F'){
+                    attron(COLOR_PAIR(15));
+                    mvprintw(i,j,"F");
+                    attroff(COLOR_PAIR(15));
+                    continue;
+                }else if(grid[i][j]=='G'){
+                    attron(COLOR_PAIR(16));
+                    mvprintw(i,j,"G");
+                    attroff(COLOR_PAIR(16));
+                    continue;
+                }else if(grid[i][j]=='S'){
+                    attron(COLOR_PAIR(17));
+                    mvprintw(i,j,"S");
+                    attroff(COLOR_PAIR(17));
+                    continue;
+                }else if(grid[i][j]=='U'){
+                    attron(COLOR_PAIR(18));
+                    mvprintw(i,j,"U");
+                    attroff(COLOR_PAIR(18));
                     continue;
                 }else if(grid[i][j]==')'){
                     attron(COLOR_PAIR(3));
@@ -1751,6 +2224,7 @@ void print_grid2(char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID
                 else if(grid[i][j]=='^'){
                     attron(COLOR_PAIR(5));
                     mvprintw(i,j,"∧");
+                    attroff(COLOR_PAIR(5));
                     continue;
                 }else if(grid[i][j]=='@' && passworddoors[i][j]==0)
                     attron(COLOR_PAIR(3));
@@ -1868,23 +2342,22 @@ void display_leaderboard(const Player players[], int player_count, const char *c
 
     for (int i = 0; i < player_count; i++) {
         int color_pair = 0;
-        if (strcmp(players[i].username, current_user) == 0) {
-            color_pair = 8;
-        } else if (i == 0) {
+         if (i == 0) {
             color_pair = 5;
             attron(COLOR_PAIR(1));
             mvprintw(6,70,"GOAT");
             mvprintw(6,2,"🏆");
-        } else if (i == 1) {
+        } if (i == 1) {
             color_pair = 6;
             mvprintw(7,70,"LEGEND");
             mvprintw(7,2,"🏆");
-        } else if (i == 2) {
+        } if (i == 2) {
             color_pair = 7;
             mvprintw(8,70,"HERO");
             mvprintw(8,2,"🏆");
+        }if (strcmp(players[i].username, current_user) == 0) {
+            color_pair = 8;
         }
-
         if (color_pair != 0) {
             attron(COLOR_PAIR(color_pair));
         }
@@ -1904,6 +2377,11 @@ void display_leaderboard(const Player players[], int player_count, const char *c
 }
 void player_setup(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], int visit[GRID_HEIGHT][GRID_WIDTH]){
     if((player->level)>4){
+        for(int i=0; i<6; i++){
+            visit_count[i]=1;
+        }
+        gsteps=0;
+        usteps=0;
         for (int i=treasure.position.y; i<treasure.position.y+treasure.height; i++){
         for(int j=treasure.position.x; j<treasure.position.x+treasure.width; j++){
             visit[i][j]=1;
@@ -1916,6 +2394,22 @@ void player_setup(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], int visit[
             || grid[player->position.y][player->position.x]=='$');
         attron(COLOR_PAIR(player->color));
         mvprintw(player->position.y, player->position.x,"%s",playerr);
+        int y=player->position.y;
+        int x=player->position.x;
+        if(x<(GRID_WIDTH*7/16) && y<(GRID_HEIGHT/2-1)){
+            isinroom=0;
+        }else if(x>=(GRID_WIDTH*7/16) && x<(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
+            isinroom=1;
+        }
+        else if(x>=(GRID_WIDTH*9/16) && y<(GRID_HEIGHT/2-1)){
+            isinroom=2;
+        }else if(x<(GRID_WIDTH*7/16) && y>=(GRID_HEIGHT/2-1)){
+            isinroom=3;
+        }else if(x>=(GRID_WIDTH*7/16) && x<(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
+            isinroom=4;
+        }else if(x>=(GRID_WIDTH*9/16) && y>=(GRID_HEIGHT/2-1)){
+            isinroom=5;
+        }
         do{
             stairs.position.x= rand() % (treasure.width - 2) + 1 + treasure.position.x;
             stairs.position.y= rand() % (treasure.height - 2) + 1 + treasure.position.y;
@@ -1932,6 +2426,10 @@ void player_setup(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], int visit[
     }
     
     int room= rand() % 6;
+    isinroom=room;
+    usteps=0;
+    gsteps=0;
+    visit_count[room]=1;
     for (int i=rooms[room].position.y; i<rooms[room].position.y+rooms[room].height; i++){
         for(int j=rooms[room].position.x; j<rooms[room].position.x+rooms[room].width; j++){
             visit[i][j]=1;
@@ -1960,22 +2458,34 @@ int handle_input(int input, Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], 
     switch (input){
         case 'J':
         case 'j':
-            yn--;
+            if(speedactivated==2)
+                yn-=2;
+            else
+                yn--;
             *steps+=1;
             break;
         case 'K':
         case 'k':
-            yn++;
+            if(speedactivated==2)
+                yn+=2;
+            else
+                yn++;
             *steps+=1;
             break;
         case 'L':
         case 'l':
-            xn++;
+            if(speedactivated==2)
+                xn+=2;
+            else
+                xn++;
             *steps+=1;
             break;
         case 'H':
         case 'h':
-            xn--;
+            if(speedactivated==2){
+                xn-=2;
+            }else
+                xn--;
             *steps+=1;
             break;
         case 'Y':
@@ -1993,7 +2503,7 @@ int handle_input(int input, Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], 
         case 'B':
         case 'b':
             yn++;
-            xn--;
+            xn--;            
             *steps+=1;
             break;
         case 'N':
@@ -2113,6 +2623,26 @@ int handle_input(int input, Player *player, char grid[GRID_HEIGHT][GRID_WIDTH], 
             print_grid(grid,visit,player);
             score(player);
             break;
+        case 'I':
+        case 'i':
+            weaponmenu(player);
+            print_grid(grid,visit,player);
+            score(player);
+            break;
+        case ' ':
+            if(selectedweapon==-1){
+                attron(COLOR_PAIR(4));
+                mvprintw(0,0,"Please choose a long-range weapon first!                                                          ");
+                attroff(COLOR_PAIR(4));
+                break;
+            }else if(throw==0){
+                close_enemy_damage(player,grid);
+                break;
+            }else if(throw==1){
+                far_enemy_damage(player,grid);
+                break;
+            }
+            break;
         default:
             break;
         
@@ -2129,7 +2659,7 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
             used=0;
             attron(COLOR_PAIR(4));
             randpass= rand()%9000+1000;
-            mvprintw(0,0,"the password is: %d       ", randpass);
+            mvprintw(0,0,"the password is: %d              ", randpass);
             attroff(COLOR_PAIR(1));
             player_move(y,x,player,grid, steps);
             break;
@@ -2190,50 +2720,52 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
                     }if(grid[i][x]!='#' && grid[i][x]!='+')
                         break;
             }
-                if(x<28 && y<11){
+            {if(x<(GRID_WIDTH/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[0].position.y; i<rooms[0].position.y+rooms[0].height; i++){
                 for(int j=rooms[0].position.x; j<rooms[0].position.x+rooms[0].width; j++){
                     visit[i][j]=1;
                     visit_count[0]=1;
                     }
-                }
-            }else if(x>=28 && x<56 && y<11){
+                }isinroom=0;
+            }else if(x>=(GRID_WIDTH/3) && x<(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[1].position.y; i<rooms[1].position.y+rooms[1].height; i++){
                 for(int j=rooms[1].position.x; j<rooms[1].position.x+rooms[1].width; j++){
                     visit[i][j]=1;
                     visit_count[1]=1;
                     }
-                }
+                }isinroom=1;
             }
-            else if(x>=56 && y<11){
+            else if(x>=(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[2].position.y; i<rooms[2].position.y+rooms[2].height; i++){
                 for(int j=rooms[2].position.x; j<rooms[2].position.x+rooms[2].width; j++){
                     visit[i][j]=1;
                     visit_count[2]=1;
                     }
-                }
-            }else if(x<28 && y>=11){
+                }isinroom=2;
+            }else if(x<(GRID_WIDTH/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[3].position.y; i<rooms[3].position.y+rooms[3].height; i++){
                 for(int j=rooms[3].position.x; j<rooms[3].position.x+rooms[3].width; j++){
                     visit[i][j]=1;
                     visit_count[3]=1;
                     }
-                }
-            }else if(x>=28 && x<56 && y>=11){
+                }isinroom=3;
+            }else if(x>=(GRID_WIDTH/3) && x<(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[4].position.y; i<rooms[4].position.y+rooms[4].height; i++){
                 for(int j=rooms[4].position.x; j<rooms[4].position.x+rooms[4].width; j++){
                     visit[i][j]=1;
                     visit_count[4]=1;
                     }
-                }
-            }else if(x>=56 && y>=11){
+                }isinroom=4;
+            }else if(x>=(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[5].position.y; i<rooms[5].position.y+rooms[5].height; i++){
                 for(int j=rooms[5].position.x; j<rooms[5].position.x+rooms[5].width; j++){
                     visit[i][j]=1;
                     visit_count[5]=1;
                     }
-                }
-            }player_move(y,x,player,grid, steps);
+                }isinroom=5;
+            }
+            }
+            player_move(y,x,player,grid, steps);
             print_grid(grid, visit, player);
             }
             else{
@@ -2262,25 +2794,25 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
             }
         case '$':
             attron(COLOR_PAIR(5));
-            mvprintw(0,0,"Golds + 10 !!                                                        ");
+            mvprintw(0,0,"Golds + 10 !!                                                           ");
             attroff(COLOR_PAIR(5));
             player->gold+=10;
             player->score+=10;
-            mvprintw(23,37,"%d",player->gold);
-            mvprintw(23,68,"%d",player->score);
+            mvprintw(GRID_HEIGHT-1,37,"%d",player->gold);
+            mvprintw(GRID_HEIGHT-1,68,"%d",player->score);
             player_move(y,x,player,grid, steps);
             break;
         case 'b':
             attron(COLOR_PAIR(5));
-            mvprintw(0,0,"Black Golds + 50 !!                                                        ");
+            mvprintw(0,0,"Black Golds + 50 !!                                                                ");
             attroff(COLOR_PAIR(5));
             player->gold+=50;
             player->score+=50;
-            mvprintw(23,37,"%d",player->gold);
-            mvprintw(23,68,"%d",player->score);
+            mvprintw(GRID_HEIGHT-1,37,"%d",player->gold);
+            mvprintw(GRID_HEIGHT-1,68,"%d",player->score);
             player_move(y,x,player,grid, steps);
             break;
-        case 'F':
+        case 'f':
             if(foodnumber>5){
                 break;
             }else{
@@ -2295,14 +2827,14 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
             attroff(COLOR_PAIR(1));
             player_move(y,x,player,grid, steps);
             break;
-        case 'S':
+        case 's':
             player->has_sword=1;
             attron(COLOR_PAIR(1));
             mvprintw(0,0,"Collected sword                                                    ");
             attroff(COLOR_PAIR(1));
             player_move(y,x,player,grid, steps);
             break;
-        case 'D':
+        case 'd':
             player->has_dagger+=10;
             attron(COLOR_PAIR(1));
             mvprintw(0,0,"Collected 10 daggers                                                    ");
@@ -2380,53 +2912,57 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
                         break;
             }
             player_move(y,x,player,grid, steps);
-            if(x<28 && y<11){
+            if(x<(GRID_WIDTH/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[0].position.y; i<rooms[0].position.y+rooms[0].height; i++){
                 for(int j=rooms[0].position.x; j<rooms[0].position.x+rooms[0].width; j++){
                     visit[i][j]=1;
                     visit_count[0]=1;
+                    
                     }
-                }
-            }else if(x>=28 && x<56 && y<11){
+                }isinroom=0;
+            }else if(x>=(GRID_WIDTH/3) && x<(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[1].position.y; i<rooms[1].position.y+rooms[1].height; i++){
                 for(int j=rooms[1].position.x; j<rooms[1].position.x+rooms[1].width; j++){
                     visit[i][j]=1;
                     visit_count[1]=1;
                     }
-                }
+                }isinroom=1;
             }
-            else if(x>=56 && y<11){
+            else if(x>=(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
                 for (int i=rooms[2].position.y; i<rooms[2].position.y+rooms[2].height; i++){
                 for(int j=rooms[2].position.x; j<rooms[2].position.x+rooms[2].width; j++){
                     visit[i][j]=1;
                     visit_count[2]=1;
                     }
-                }
-            }else if(x<28 && y>=11){
+                }isinroom=2;
+            }else if(x<(GRID_WIDTH/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[3].position.y; i<rooms[3].position.y+rooms[3].height; i++){
                 for(int j=rooms[3].position.x; j<rooms[3].position.x+rooms[3].width; j++){
                     visit[i][j]=1;
                     visit_count[3]=1;
                     }
-                }
-            }else if(x>=28 && x<56 && y>=11){
+                }isinroom=3;
+            }else if(x>=(GRID_WIDTH/3) && x<(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[4].position.y; i<rooms[4].position.y+rooms[4].height; i++){
                 for(int j=rooms[4].position.x; j<rooms[4].position.x+rooms[4].width; j++){
                     visit[i][j]=1;
                     visit_count[4]=1;
                     }
-                }
-            }else if(x>=56 && y>=11){
+                }isinroom=4;
+            }else if(x>=(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
                 for (int i=rooms[5].position.y; i<rooms[5].position.y+rooms[5].height; i++){
                 for(int j=rooms[5].position.x; j<rooms[5].position.x+rooms[5].width; j++){
                     visit[i][j]=1;
                     visit_count[5]=1;
                     }
-                }
+                }isinroom=5;
             }
             print_grid(grid, visit, player);
             break;
         case '#':
+            isinroom=-1;
+            gsteps=0;
+            usteps=0;
             for (int i=x-1; i>=x-5;i--){
                     if(grid[y][i]=='#'){
                         mvprintw(y,i,"#");
@@ -2473,35 +3009,1780 @@ int check_position(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDT
         case '.':
             player_move(y,x,player,grid, steps);
             break;
+        case 'D':
+        case 'F':
+        case 'G':
+        case 'S':
+        case 'U':
+            if(selectedweapon!=-1)
+                player_move(y,x,player,grid, steps);
+            else{
+                attron(COLOR_PAIR(4));
+                mvprintw(0,0,"Please choose a weapon first!                                                          ");
+                attroff(COLOR_PAIR(4));
+            }break;
         case '<':
             return 1;
         default:
             break;
     }
 }
+
+void far_enemy_damage(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH]){
+    int ch=getch();
+    if(ch=='a')
+        ch=chcopy;
+    if(ch=='h'){
+        if (selectedweapon==53){
+            if(player->has_arrow==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of arrows!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_arrow-=1;
+        }else if(selectedweapon==123){
+            if(player->has_dagger==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of daggers!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_dagger-=1;
+        }else if(selectedweapon==158){
+            if(player->has_wand==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of wands!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_wand-=1;
+        }
+        int y=player->position.y;
+        for(int x=player->position.x-1; x>=player->position.x-(selectedweapon%10+2);x--){
+            if(grid[y][x]=='D'){
+            attron(COLOR_PAIR(1));
+            mvprintw(0,0,"You killed a deamon!                                              ");
+            attroff(COLOR_PAIR(1));
+            mvprintw(y,x,".");
+            grid[y][x]='.';
+            break;
+        }else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }break;
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Giant                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }break;
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Snake                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }break;
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed an Undeed                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }break;
+            }
+        }attroff(COLOR_PAIR(1));
+        }
+    }else if(ch=='l'){
+        if (selectedweapon==53){
+            if(player->has_arrow==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of arrows!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_arrow-=1;
+        }else if(selectedweapon==123){
+            if(player->has_dagger==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of daggers!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_dagger-=1;
+        }else if(selectedweapon==158){
+            if(player->has_wand==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of wands!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_wand-=1;
+        }
+        int y=player->position.y;
+        for(int x=player->position.x+1; x<=player->position.x+(selectedweapon%10+2);x++){
+            if(grid[y][x]=='D'){
+            attron(COLOR_PAIR(1));
+            mvprintw(0,0,"You killed a deamon!                                              ");
+            attroff(COLOR_PAIR(1));
+            mvprintw(y,x,".");
+            grid[y][x]='.';
+            break;
+        }else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }break;
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Giant                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }break;
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Snake                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }break;
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed an Undeed                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }break;
+            }
+        }attroff(COLOR_PAIR(1));
+        }
+    }else if(ch=='j'){
+        if (selectedweapon==53){
+            if(player->has_arrow==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of arrows!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_arrow-=1;
+        }else if(selectedweapon==123){
+            if(player->has_dagger==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of daggers!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_dagger-=1;
+        }else if(selectedweapon==158){
+            if(player->has_wand==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of wands!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_wand-=1;
+        }int x=player->position.x;
+        for(int y=player->position.y-1; y>=player->position.y-(selectedweapon%10+2);y--){
+            if(grid[y][x]=='D'){
+            attron(COLOR_PAIR(1));
+            mvprintw(0,0,"You killed a deamon!                                              ");
+            attroff(COLOR_PAIR(1));
+            mvprintw(y,x,".");
+            grid[y][x]='.';
+            break;
+        }else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }break;
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Giant                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }break;
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Snake                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }break;
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed an Undeed                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }break;
+            }
+        }attroff(COLOR_PAIR(1));
+        }
+    }else if(ch=='k'){
+        if (selectedweapon==53){
+            if(player->has_arrow==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of arrows!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_arrow-=1;
+        }else if(selectedweapon==123){
+            if(player->has_dagger==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of daggers!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_dagger-=1;
+        }else if(selectedweapon==158){
+            if(player->has_wand==0){
+                attron(COLOR_PAIR(3));
+                mvprintw(0,0,"Sorry! You're out of wands!                                                                     ");
+                attroff(COLOR_PAIR(3));
+                return;
+            }
+            player->has_wand-=1;
+        }
+        int x=player->position.x;
+        for(int y=player->position.y+1; y<=player->position.y+(selectedweapon%10+2);y++){
+            if(grid[y][x]=='D'){
+            attron(COLOR_PAIR(1));
+            mvprintw(0,0,"You killed a deamon!                                              ");
+            attroff(COLOR_PAIR(1));
+            mvprintw(y,x,".");
+            grid[y][x]='.';
+            break;
+        }else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }break;
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Giant                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }break;
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Snake                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }break;
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed an Undeed                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+                break;
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }break;
+            }
+        }attroff(COLOR_PAIR(1));
+        }
+    }chcopy=ch;
+    return;
+}
+
+void close_enemy_damage(Player *player, char grid[GRID_HEIGHT][GRID_WIDTH]){
+    for (int y=player->position.y-1; y<=player->position.y+1; y++ ){
+        for(int x=player->position.x-1; x<=player->position.x+1;x++){
+            attron(COLOR_PAIR(1));
+        if(grid[y][x]=='D'){
+            attron(COLOR_PAIR(1));
+            mvprintw(0,0,"You killed a deamon!                                              ");
+            attroff(COLOR_PAIR(1));
+            mvprintw(y,x,".");
+            grid[y][x]='.';
+        }else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Giant                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed a Snake                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"You killed an Undeed                                              ");
+                attroff(COLOR_PAIR(1));
+                mvprintw(y,x,".");
+                grid[y][x]='.';
+            }else{
+                attron(COLOR_PAIR(1));
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }
+            }
+        }attroff(COLOR_PAIR(1));
+        }
+    }
+}
+
+
 int flag=0;
 int foodcount=0;
+
 int player_move(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDTH], int *steps){
+    if(player->level==5 && grid[y][x]=='<'){
+        finish_index=1;
+    }
+    totalsteps+=1;
+    if(healthtime>0){
+        healthtime-=1;
+        if(healthtime==0)
+            healthactivated=1;
+    }if(speedtime>0){
+        speedtime-=1;
+        if(speedtime==0)
+            speedactivated=1;
+    }if(player->level==5)
+        {if(x<(GRID_WIDTH*7/16) && y<(GRID_HEIGHT/2-1)){
+                    isinroom=0;
+                }else if(x>=(GRID_WIDTH*7/16) && x<(GRID_WIDTH*2/3) && y<(GRID_HEIGHT/2-1)){
+                    isinroom=1;
+                }
+                else if(x>=(GRID_WIDTH*9/16) && y<(GRID_HEIGHT/2-1)){
+                    isinroom=2;
+                }else if(x<(GRID_WIDTH*7/16) && y>=(GRID_HEIGHT/2-1)){
+                    isinroom=3;
+                }else if(x>=(GRID_WIDTH*7/16) && x<(GRID_WIDTH*2/3) && y>=(GRID_HEIGHT/2-1)){
+                    isinroom=4;
+                }else if(x>=(GRID_WIDTH*9/16) && y>=(GRID_HEIGHT/2-1)){
+                    isinroom=5;
+                }
+            }
+    if(healthactivated==2){
+        if(totalsteps%(20)==0){
+            if(player->health_point+(9-(player->difficulty)*2)<=100)
+            player->health_point+=(9-(player->difficulty)*2);
+        else    
+            player->health_point=100;
+        attron(COLOR_PAIR(1));
+        mvprintw(0,0,"Hp +%d   %d!!                                                                  ",9-(player->difficulty)*2, healthactivated);
+        attroff(COLOR_PAIR(1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        }
+    }
+    else{
+    if(totalsteps%(40)==0 && (player->food)>(50+10*(player->difficulty))){
+        if(player->health_point+(9-(player->difficulty)*2)<=100)
+            player->health_point+=(9-(player->difficulty)*2);
+        else    
+            player->health_point=100;
+        attron(COLOR_PAIR(1));
+        mvprintw(0,0,"Hp +%d!!                                                              ",9-(player->difficulty)*2);
+        attroff(COLOR_PAIR(1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+    }
+    }
     attroff(COLOR_PAIR(player->color));
+    if(grid[y][x]=='D' || grid[y][x]=='F' || grid[y][x]=='G' || grid[y][x]=='S' || grid[y][x]=='U'){
+        attron(COLOR_PAIR(1));
+        if(grid[y][x]=='D')
+            mvprintw(0,0,"You killed a deamon!                                              ");
+        else if(grid[y][x]=='F'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            fbmonsters[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(fbmonsters[isinroom].dhealth<=0){
+                mvprintw(0,0,"You killed a fire breathing monster!                                              ");
+            }else{
+                mvprintw(0,0,"The fire breathing monster was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y-1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y-1][x]='F';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y+1,x,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y+1][x]='F';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x-1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x-1]='F';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(15));
+                    mvprintw(y,x+1,"F");
+                    attroff(COLOR_PAIR(15));
+                    grid[y][x]='.';
+                    grid[y][x+1]='F';
+                }
+                return 0;
+            }
+        }else if(grid[y][x]=='G'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            giants[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(giants[isinroom].dhealth<=0){
+                mvprintw(0,0,"You killed a Giant                                              ");
+            }else{
+                mvprintw(0,0,"The Giant was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y-1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y-1][x]='G';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y+1,x,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y+1][x]='G';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x-1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x-1]='G';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(16));
+                    mvprintw(y,x+1,"G");
+                    attroff(COLOR_PAIR(16));
+                    grid[y][x]='.';
+                    grid[y][x+1]='G';
+                }
+                return 0;
+            }
+        }else if(grid[y][x]=='S'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            snakes[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(snakes[isinroom].dhealth<=0){
+                mvprintw(0,0,"You killed a Snake                                              ");
+            }else{
+                mvprintw(0,0,"The Snake was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y-1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y-1][x]='S';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y+1,x,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y+1][x]='S';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x-1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x-1]='S';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(17));
+                    mvprintw(y,x+1,"S");
+                    attroff(COLOR_PAIR(17));
+                    grid[y][x]='.';
+                    grid[y][x+1]='S';
+                }
+                return 0;
+            }
+        }else if(grid[y][x]=='U'){
+            if(damagetime>0){
+                damagetime-=1;
+                if(damagetime==0)
+                    damageactivated=1;
+            }
+            undeeds[isinroom].dhealth-=(selectedweapon/10)*damageactivated;
+            if(undeeds[isinroom].dhealth<=0){
+                mvprintw(0,0,"You killed an Undeed                                              ");
+            }else{
+                mvprintw(0,0,"The Undeed was damaged %d units!                                        ",(selectedweapon/10)*damageactivated);
+                attroff(COLOR_PAIR(1));
+                if(grid[y-1][x]=='.' && !(player->position.y==y-1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y-1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y-1][x]='U';
+                }else if(grid[y+1][x]=='.' && !(player->position.y==y+1 && player->position.x==x)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y+1,x,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y+1][x]='U';
+                }else if(grid[y][x-1]=='.' && !(player->position.y==y && player->position.x==x-1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x-1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x-1]='U';
+                }else if(grid[y][x+1]=='.' && !(player->position.y==y && player->position.x==x+1)){
+                    mvprintw(y,x,".");
+                    attron(COLOR_PAIR(18));
+                    mvprintw(y,x+1,"U");
+                    attroff(COLOR_PAIR(18));
+                    grid[y][x]='.';
+                    grid[y][x+1]='U';
+                }
+                return 0;
+            }
+        }attroff(COLOR_PAIR(1));
+        grid[y][x]='.';
+    } 
+    else if(grid[player->position.y][player->position.x-1]=='D' || grid[player->position.y-1][player->position.x]=='D'
+    || grid[player->position.y][player->position.x+1]=='D' || grid[player->position.y+1][player->position.x]=='D'){
+        player->health_point-=(4*(player->difficulty+1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        attron(COLOR_PAIR(3));
+        mvprintw(0,0,"Lost %d health points due to deamon's attack!!                                                      ",3*(player->difficulty+1));
+        attroff(COLOR_PAIR(3));
+    }else if(grid[player->position.y][player->position.x-1]=='F' || grid[player->position.y-1][player->position.x]=='F'
+    || grid[player->position.y][player->position.x+1]=='F' || grid[player->position.y+1][player->position.x]=='F'){
+        player->health_point-=(4*(player->difficulty+1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        attron(COLOR_PAIR(3));
+        mvprintw(0,0,"Lost %d health points due to fire Breathing Moster's attack!!                                     ",4*(player->difficulty+1));
+        attroff(COLOR_PAIR(3));
+    }else if(grid[player->position.y][player->position.x-1]=='G' || grid[player->position.y-1][player->position.x]=='G'
+    || grid[player->position.y][player->position.x+1]=='G' || grid[player->position.y+1][player->position.x]=='G'){
+        player->health_point-=(4*(player->difficulty+1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        attron(COLOR_PAIR(3));
+        mvprintw(0,0,"Lost %d health points due to Giants's attack!!                                     ",5*(player->difficulty+1));
+        attroff(COLOR_PAIR(3));
+    }else if(grid[player->position.y][player->position.x-1]=='S' || grid[player->position.y-1][player->position.x]=='S'
+    || grid[player->position.y][player->position.x+1]=='S' || grid[player->position.y+1][player->position.x]=='S'){
+        player->health_point-=(5*(player->difficulty+1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        attron(COLOR_PAIR(3));
+        mvprintw(0,0,"Lost %d health points due to Snake's attack!!                                     ",5*(player->difficulty+1));
+        attroff(COLOR_PAIR(3));
+    }else if(grid[player->position.y][player->position.x-1]=='U' || grid[player->position.y-1][player->position.x]=='U'
+    || grid[player->position.y][player->position.x+1]=='U' || grid[player->position.y+1][player->position.x]=='U'){
+        player->health_point-=(5*(player->difficulty+1));
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        attron(COLOR_PAIR(3));
+        mvprintw(0,0,"Lost %d health points due to Undeed's attack!!                                     ",6*(player->difficulty+1));
+        attroff(COLOR_PAIR(3));
+    }
+    else{
+        int y=-1,x=-1;
+        for(int i=player->position.y-2; i<=player->position.y+2;i++){
+            for(int j=player->position.x-2; j<=player->position.x+2; j++){
+                if(grid[i][j]=='F' && (y!=i || x!=j)){
+                x=j;
+                y=i;
+                    if(player->position.x>j){
+                        if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                        && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D'
+                        && grid[y][x+1]!='G' && grid[y][x+1]!='S' && grid[y][x+1]!='U' && !((x+1)==player->position.x && i==player->position.y)){
+                            x+=1;
+                        }
+                    }else if(player->position.x<j){
+                        if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                        && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D'
+                        && grid[y][x-1]!='G' && grid[y][x-1]!='S' && grid[y][x-1]!='U' && !((x-1)==player->position.x && i==player->position.y) ){
+                            x-=1;
+                        }
+                    }if(player->position.y>i){
+                        if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                        && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D'
+                        && grid[y+1][x]!='G' && grid[y+1][x]!='S' && grid[y+1][x]!='U' && !(x==player->position.x && (y+1)==player->position.y)){
+                            y+=1;
+                        }
+                    }else if(player->position.y<i){
+                        if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                        && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D'
+                        && grid[y-1][x]!='G' && grid[y-1][x]!='S' && grid[y-1][x]!='U' && !(x==player->position.x && (y-1)==player->position.y)){
+                            y-=1;
+                        }
+                    }
+                    if(visit[i][j]==1){
+                        mvprintw(i,j,".");
+                        attron(COLOR_PAIR(15));
+                        mvprintw(y,x,"F");
+                        attroff(COLOR_PAIR(15));
+                        grid[i][j]='.';
+                        grid[y][x]='F';
+                    }
+                }
+            }
+        }
+        if(player->level<=4)
+        {    x=-1;
+            y=-1;
+            int x1=-1, x2=-1, y1=-1, y2=-1;
+            for(int k=0; k<6; k++){
+                if((isinroom==k && visit_count[k]==1)){
+                    for(int i=rooms[k].position.y; i<rooms[k].position.y+rooms[k].height; i++){
+                        for(int j=rooms[k].position.x; j<rooms[k].position.x+rooms[k].width; j++){
+                            if(grid[i][j]=='G' && (y!=i || x!=j) && gsteps<=10){
+                                x=j;
+                                y=i;
+                                if(player->position.x>j){
+                                    if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                    && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D'
+                                    && grid[y][x+1]!='F' && grid[y][x+1]!='S' && grid[y][x+1]!='U' && !((x+1)==player->position.x && i==player->position.y)){
+                                        x+=1;
+                                    }
+                                }else if(player->position.x<j){
+                                    if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                    && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D'
+                                    && grid[y][x-1]!='F' && grid[y][x-1]!='S' && grid[y][x-1]!='U' && !((x-1)==player->position.x && i==player->position.y) ){
+                                        x-=1;
+                                    }
+                                }if(player->position.y>i){
+                                    if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                    && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D'
+                                    && grid[y+1][x]!='F' && grid[y+1][x]!='S' && grid[y+1][x]!='U' && !(x==player->position.x && (y+1)==player->position.y)){
+                                        y+=1;
+                                    }
+                                }else if(player->position.y<i){
+                                    if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                    && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D'
+                                    && grid[y-1][x]!='F' && grid[y-1][x]!='S' && grid[y-1][x]!='U' && !(x==player->position.x && (y-1)==player->position.y)){
+                                        y-=1;
+                                    }
+                                }
+                                if(visit[i][j]==1){
+                                    gsteps++;
+                                    mvprintw(i,j,".");
+                                    attron(COLOR_PAIR(16));
+                                    mvprintw(y,x,"G");
+                                    attroff(COLOR_PAIR(16));
+                                    grid[i][j]='.';
+                                    grid[y][x]='G';
+                                }
+                            }
+                            }
+                        }
+                    }
+                }x=-1;
+            y=-1;
+            for(int k=0; k<6; k++){
+                if(isinroom==k && visit_count[k]==1){
+                    for(int i=rooms[k].position.y; i<rooms[k].position.y+rooms[k].height; i++){
+                        for(int j=rooms[k].position.x; j<rooms[k].position.x+rooms[k].width; j++){
+                            if(grid[i][j]=='S' && (y!=i || x!=j)){
+                                x=j;
+                                y=i;
+                                if(player->position.x>j){
+                                    if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                    && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D'
+                                    && grid[y][x+1]!='F' && grid[y][x+1]!='U' && grid[y][x+1]!='G' && !((x+1)==player->position.x && i==player->position.y)){
+                                        x+=1;
+                                    }
+                                }else if(player->position.x<j){
+                                    if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                    && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D'
+                                    && grid[y][x-1]!='F' && grid[y][x-1]!='U' && grid[y][x-1]!='G' && !((x-1)==player->position.x && i==player->position.y) ){
+                                        x-=1;
+                                    }
+                                }if(player->position.y>i){
+                                    if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                    && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D'
+                                    && grid[y+1][x]!='F' && grid[y+1][x]!='U' && grid[y+1][x]!='G' && !(x==player->position.x && (y+1)==player->position.y)){
+                                        y+=1;
+                                    }
+                                }else if(player->position.y<i){
+                                    if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                    && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D'
+                                    && grid[y-1][x]!='F' && grid[y-1][x]!='U' && grid[y-1][x]!='G' && !(x==player->position.x && (y-1)==player->position.y)){
+                                        y-=1;
+                                    }
+                                }
+                                if(visit[i][j]==1){
+                                    mvprintw(i,j,".");
+                                    attron(COLOR_PAIR(17));
+                                    mvprintw(y,x,"S");
+                                    attroff(COLOR_PAIR(17));
+                                    grid[i][j]='.';
+                                    grid[y][x]='S';
+                                }
+                            }
+                            }
+                        }
+                    }
+                }x=-1;
+            y=-1;
+            for(int k=0; k<6; k++){
+                if(isinroom==k && visit_count[k]==1){
+                    for(int i=rooms[k].position.y; i<rooms[k].position.y+rooms[k].height; i++){
+                        for(int j=rooms[k].position.x; j<rooms[k].position.x+rooms[k].width; j++){
+                            if(grid[i][j]=='U' && (y!=i || x!=j) && usteps<=15){
+                                x=j;
+                                y=i;
+                                if(player->position.x>j){
+                                    if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                    && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D'
+                                    && grid[y][x+1]!='F' && grid[y][x+1]!='S' && grid[y][x+1]!='G' && !((x+1)==player->position.x && i==player->position.y)){
+                                        x+=1;
+                                    }
+                                }else if(player->position.x<j){
+                                    if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                    && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D'
+                                    && grid[y][x-1]!='F' && grid[y][x-1]!='S' && grid[y][x-1]!='G' && !((x-1)==player->position.x && i==player->position.y) ){
+                                        x-=1;
+                                    }
+                                }if(player->position.y>i){
+                                    if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                    && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D'
+                                    && grid[y+1][x]!='F' && grid[y+1][x]!='S' && grid[y+1][x]!='G' && !(x==player->position.x && (y+1)==player->position.y)){
+                                        y+=1;
+                                    }
+                                }else if(player->position.y<i){
+                                    if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                    && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D'
+                                    && grid[y-1][x]!='F' && grid[y-1][x]!='S' && grid[y-1][x]!='G' && !(x==player->position.x && (y-1)==player->position.y)){
+                                        y-=1;
+                                    }
+                                }
+                                if(visit[i][j]==1){
+                                    usteps++;
+                                    mvprintw(i,j,".");
+                                    attron(COLOR_PAIR(18));
+                                    mvprintw(y,x,"U");
+                                    attroff(COLOR_PAIR(18));
+                                    grid[i][j]='.';
+                                    grid[y][x]='U';
+                                }
+                            }
+                            }
+                        }
+                    }
+                }
+            }else if(player->level==5){
+                x=-1;
+                y=-1;
+                int index;
+                int x1=-1, x2=-1, y1=-1, y2=-1;
+                for(int k=0; k<6; k++){
+                    if((isinroom==k && visit_count[k]==1)){
+                        if(k<3)
+                            index=1;
+                        else
+                            index=0;
+                        for(int i=(treasure.position.y)+((GRID_HEIGHT/3-1)*(k/3)); i<((treasure.position.y+treasure.height)-((GRID_HEIGHT/3-1)*index)); i++){
+                            for(int j=(treasure.position.x+(k%3)*((GRID_WIDTH/8))); j<((treasure.position.x+treasure.width)-((GRID_WIDTH/8)*index)*(2-(k%3))); j++){
+                                if(grid[i][j]=='G' && (y!=i || x!=j) && gsteps<=100){
+                                    x=j;
+                                    y=i;
+                                    if(player->position.x>j){
+                                        if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                        && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D' && grid[y][x+1]!='<'
+                                        && grid[y][x+1]!='F' && grid[y][x+1]!='S' && grid[y][x+1]!='U' && !((x+1)==player->position.x && i==player->position.y)){
+                                            x+=1;
+                                        }
+                                    }else if(player->position.x<j){
+                                        if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                        && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D' && grid[y][x-1]!='<'
+                                        && grid[y][x-1]!='F' && grid[y][x-1]!='S' && grid[y][x-1]!='U' && !((x-1)==player->position.x && i==player->position.y) ){
+                                            x-=1;
+                                        }
+                                    }if(player->position.y>i){
+                                        if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                        && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D' && grid[y+1][x]!='<'
+                                        && grid[y+1][x]!='F' && grid[y+1][x]!='S' && grid[y+1][x]!='U' && !(x==player->position.x && (y+1)==player->position.y)){
+                                            y+=1;
+                                        }
+                                    }else if(player->position.y<i){
+                                        if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                        && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D' && grid[y-1][x]!='<'
+                                        && grid[y-1][x]!='F' && grid[y-1][x]!='S' && grid[y-1][x]!='U' && !(x==player->position.x && (y-1)==player->position.y)){
+                                            y-=1;
+                                        }
+                                    }
+                                    if(visit[i][j]==1){
+                                        gsteps++;
+                                        mvprintw(i,j,".");
+                                        attron(COLOR_PAIR(16));
+                                        mvprintw(y,x,"G");
+                                        attroff(COLOR_PAIR(16));
+                                        grid[i][j]='.';
+                                        grid[y][x]='G';
+                                    }
+                                }
+                                }
+                            }
+                        }
+                    }x=-1;
+                y=-1;
+                for(int k=0; k<6; k++){
+                    if(isinroom==k && visit_count[k]==1){
+                        for(int i=(treasure.position.y)+((GRID_HEIGHT/3-1)*(k/3)); i<((treasure.position.y+treasure.height)-((GRID_HEIGHT/3-1)*index)); i++){
+                            for(int j=(treasure.position.x+(k%3)*((GRID_WIDTH/8))); j<((treasure.position.x+treasure.width)-((GRID_WIDTH/8)*index)*(2-(k%3))); j++){
+                                if(grid[i][j]=='S' && (y!=i || x!=j)){
+                                    x=j;
+                                    y=i;
+                                    if(player->position.x>j){
+                                        if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                        && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D' && grid[y][x+1]!='<'
+                                        && grid[y][x+1]!='F' && grid[y][x+1]!='U' && grid[y][x+1]!='G' && !((x+1)==player->position.x && i==player->position.y)){
+                                            x+=1;
+                                        }
+                                    }else if(player->position.x<j){
+                                        if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                        && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D' && grid[y][x-1]!='<'
+                                        && grid[y][x-1]!='F' && grid[y][x-1]!='U' && grid[y][x-1]!='G' && !((x-1)==player->position.x && i==player->position.y) ){
+                                            x-=1;
+                                        }
+                                    }if(player->position.y>i){
+                                        if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                        && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D' && grid[y+1][x]!='<'
+                                        && grid[y+1][x]!='F' && grid[y+1][x]!='U' && grid[y+1][x]!='G' && !(x==player->position.x && (y+1)==player->position.y)){
+                                            y+=1;
+                                        }
+                                    }else if(player->position.y<i){
+                                        if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                        && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D' && grid[y-1][x]!='<'
+                                        && grid[y-1][x]!='F' && grid[y-1][x]!='U' && grid[y-1][x]!='G' && !(x==player->position.x && (y-1)==player->position.y)){
+                                            y-=1;
+                                        }
+                                    }
+                                    if(visit[i][j]==1){
+                                        mvprintw(i,j,".");
+                                        attron(COLOR_PAIR(17));
+                                        mvprintw(y,x,"S");
+                                        attroff(COLOR_PAIR(17));
+                                        grid[i][j]='.';
+                                        grid[y][x]='S';
+                                    }
+                                }
+                                }
+                            }
+                        }
+                    }x=-1;
+                y=-1;
+                for(int k=0; k<6; k++){
+                    if(isinroom==k && visit_count[k]==1){
+                        for(int i=(treasure.position.y)+((GRID_HEIGHT/3-1)*(k/3)); i<((treasure.position.y+treasure.height)-((GRID_HEIGHT/3-1)*index)); i++){
+                            for(int j=(treasure.position.x+(k%3)*((GRID_WIDTH/8))); j<((treasure.position.x+treasure.width)-((GRID_WIDTH/8)*index)*(2-(k%3))); j++){
+                                if(grid[i][j]=='U' && (y!=i || x!=j) && usteps<=80){
+                                    x=j;
+                                    y=i;
+                                    if(player->position.x>j){
+                                        if(grid[y][x+1]!='|' && grid[y][x+1]!='_' && grid[y][x+1]!='O' && grid[y][x+1]!=' ' && grid[y][x+1]!='+'
+                                        && grid[y][x+1]!='@' && grid[y][x+1]!='p' && grid[y][x+1]!='?' && grid[y][x+1]!='#' && grid[y][x+1]!='D' && grid[y][x+1]!='<'
+                                        && grid[y][x+1]!='F' && grid[y][x+1]!='S' && grid[y][x+1]!='G' && !((x+1)==player->position.x && i==player->position.y)){
+                                            x+=1;
+                                        }
+                                    }else if(player->position.x<j){
+                                        if(grid[y][x-1]!='|' && grid[y][x-1]!='_' && grid[y][x-1]!='O' && grid[y][x-1]!=' ' && grid[y][x-1]!='+'
+                                        && grid[y][x-1]!='@' && grid[y][x-1]!='p' && grid[y][x-1]!='?' && grid[y][x-1]!='#' && grid[y][x-1]!='D' && grid[y][x-1]!='<'
+                                        && grid[y][x-1]!='F' && grid[y][x-1]!='S' && grid[y][x-1]!='G' && !((x-1)==player->position.x && i==player->position.y) ){
+                                            x-=1;
+                                        }
+                                    }if(player->position.y>i){
+                                        if(grid[y+1][x]!='|' && grid[y+1][x]!='_' && grid[y+1][x]!='O' && grid[y+1][x]!=' ' && grid[y+1][x]!='+'
+                                        && grid[y+1][x]!='@' && grid[y+1][x]!='p' && grid[y+1][x]!='?' && grid[y+1][x]!='#' && grid[y+1][x]!='D' && grid[y+1][x]!='<'
+                                        && grid[y+1][x]!='F' && grid[y+1][x]!='S' && grid[y+1][x]!='G' && !(x==player->position.x && (y+1)==player->position.y)){
+                                            y+=1;
+                                        }
+                                    }else if(player->position.y<i){
+                                        if(grid[y-1][x]!='|' && grid[y-1][x]!='_' && grid[y-1][x]!='O' && grid[y-1][x]!=' ' && grid[y-1][x]!='+'
+                                        && grid[y-1][x]!='@' && grid[y-1][x]!='p' && grid[y-1][x]!='?' && grid[y-1][x]!='#' && grid[y-1][x]!='D'
+                                        && grid[y-1][x]!='F' && grid[y-1][x]!='S' && grid[y-1][x]!='G' && !(x==player->position.x && (y-1)==player->position.y) && grid[y-1][x]!='<'){
+                                            y-=1;
+                                        }
+                                    }
+                                    if(visit[i][j]==1){
+                                        usteps++;
+                                        mvprintw(i,j,".");
+                                        attron(COLOR_PAIR(18));
+                                        mvprintw(y,x,"U");
+                                        attroff(COLOR_PAIR(18));
+                                        grid[i][j]='.';
+                                        grid[y][x]='U';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }                
+
     if((*steps)%(7*(5-player->difficulty))==0 && *steps!=0){
             player->food-=4;
             foodcount-=4;
             flag=0;
-            mvprintw(23,52,"%d ", player->food);
+            mvprintw(GRID_HEIGHT-1,52,"%d ", player->food);
         }
     if(spellsteps!=0 && spellsteps%20==0){
         player->health_point-=5;
-        mvprintw(23,24,"%d ", player->health_point);
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
         spellsteps+=1;
     }
     if (foodcount!=0 && foodcount%(4*(player->difficulty+1))==0 && flag==0 && player->food<50){
         player->health_point-=4*(1+player->difficulty);
-        mvprintw(23,24,"%d ", player->health_point);
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
         flag=1;
     }if(player->health_point<=0 || player->food<=0)
         isdead=1;
     if(steps2-(*steps)==-30){
-        for (int i=0; i<83; i++)
+        for (int i=0; i<(GRID_WIDTH); i++)
             mvprintw(0,i," ");
     }if (grid[player->position.y][player->position.x]=='#'
         || grid[player->position.y][player->position.x]=='+'
@@ -2545,12 +4826,12 @@ int player_move(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDTH],
     else if(grid[player->position.y][player->position.x]=='p'){
         player->health_point-=10;
         player->score-=10;
-        mvprintw(23,24,"%d ", player->health_point);
-        mvprintw(23,68,"%d     ",player->score);
+        mvprintw(GRID_HEIGHT-1,24,"%d ", player->health_point);
+        mvprintw(GRID_HEIGHT-1,68,"%d     ",player->score);
         grid[player->position.y][player->position.x]='^';
         attron(COLOR_PAIR(5));
         mvprintw(player->position.y,player->position.x,"∧");
-        mvprintw(0,0,"You walked on a trap! -10 hp");
+        mvprintw(0,0,"You walked on a trap! -10 hp                                                   ");
         attroff(COLOR_PAIR(5));
     }else if(grid[player->position.y][player->position.x]=='u'){
         if(isspell[player->position.y][player->position.x]==1){
@@ -2629,8 +4910,37 @@ int player_move(int y, int x, Player *player,char grid[GRID_HEIGHT][GRID_WIDTH],
             attron(COLOR_PAIR(11));
             spellsteps+=1;
         }attroff(COLOR_PAIR(13));
-        mvprintw(player->position.y,player->position.x,".");
-        grid[player->position.y][player->position.x]='.';
+        
+        if(grid[player->position.y][player->position.x]!='D' && grid[player->position.y][player->position.x]!='F'  && grid[player->position.y][player->position.x]!='G'
+        && grid[player->position.y][player->position.x]!='S' && grid[player->position.y][player->position.x]!='U'){
+            mvprintw(player->position.y,player->position.x,".");
+            grid[player->position.y][player->position.x]='.';
+        }else if(grid[player->position.y][player->position.x]=='D'){
+            attron(COLOR_PAIR(14));
+            mvprintw(player->position.y,player->position.x,"D");
+            grid[player->position.y][player->position.x]='D';
+            attroff(COLOR_PAIR(14));
+        }else if(grid[player->position.y][player->position.x]=='F'){
+            attron(COLOR_PAIR(15));
+            mvprintw(player->position.y,player->position.x,"F");
+            grid[player->position.y][player->position.x]='F';
+            attroff(COLOR_PAIR(15));
+        }else if(grid[player->position.y][player->position.x]=='G'){
+            attron(COLOR_PAIR(16));
+            mvprintw(player->position.y,player->position.x,"G");
+            grid[player->position.y][player->position.x]='G';
+            attroff(COLOR_PAIR(16));
+        }else if(grid[player->position.y][player->position.x]=='S'){
+            attron(COLOR_PAIR(17));
+            mvprintw(player->position.y,player->position.x,"S");
+            grid[player->position.y][player->position.x]='S';
+            attroff(COLOR_PAIR(17));
+        }else if(grid[player->position.y][player->position.x]=='U'){
+            attron(COLOR_PAIR(18));
+            mvprintw(player->position.y,player->position.x,"U");
+            grid[player->position.y][player->position.x]='U';
+            attroff(COLOR_PAIR(18));
+        }
         attroff(COLOR_PAIR(11));
     }refresh();
     player->position.y=y;
