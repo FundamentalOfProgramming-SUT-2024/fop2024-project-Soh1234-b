@@ -460,8 +460,9 @@ int main() {
     }
     if (player.health_point<=0)
         isdead=1;
-    if(is_guest==0 && isdead==0){
-        save_quit(&player);
+    if(isdead==0){
+        if(is_guest==0)
+            save_quit(&player);
     final_menu(&player);
     endwin();
     return 0;}
